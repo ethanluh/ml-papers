@@ -3,13 +3,20 @@ SQLite interface for arXiv paper storage.
 Schema: papers table with full metadata + Groq summary fields.
 """
 
+import os
 import sqlite3
 import json
 import re
 from pathlib import Path
 from datetime import datetime, date
 
-DB_PATH = Path(__file__).parent.parent / "db" / "papers.db"
+# Use persistent storage path for cloud platforms, fall back to local db/ directory
+DATA_DIR = Path(os.getenv("DATABASE_PATH", "/var/data"))
+if not os.getenv("DATABASE_PATH"):
+    # Fallback to local directory for development
+    DATA_DIR = Path(__file__).parent.parent / "db"
+
+DB_PATH = DATA_DIR / "papers.db"
 
 
 def get_conn() -> sqlite3.Connection:

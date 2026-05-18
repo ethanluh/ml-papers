@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: arxiv-ml-dashboard
+    runtime: python
+    pythonVersion: 3.11
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GROQ_API_KEY
+        scope: build,runtime
+      - key: DATABASE_PATH
+        value: /var/data
+      - key: PYTHON_VERSION
+        value: 3.11
+    disk:
+      name: sqlite-storage
+      mountPath: /var/data
+      sizeGB: 1
+
+  - type: background-worker
+    name: arxiv-scheduler
+    runtime: python
+    pythonVersion: 3.11
+    buildCommand: pip install -r requirements.txt
+    startCommand: python pipeline/scheduler.py
+    envVars:
+      - key: GROQ_API_KEY
+        scope: build,runtime
+      - key: DATABASE_PATH
+        value: /var/data

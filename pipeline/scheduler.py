@@ -1,10 +1,7 @@
 """
 Scheduler: runs the arXiv pipeline once per day at a configured UTC hour.
-Can be run as a long-lived process (e.g. via systemd or screen) or
-just invoked directly from a cron job:
 
-    # crontab entry (runs daily at 06:00 UTC)
-    0 6 * * * cd /path/to/arxiv-ml-dashboard && python pipeline/scheduler.py --once
+This runs as a long-lived background worker on cloud platforms (Render.com, Railway).
 
 Usage:
     python pipeline/scheduler.py           # loop forever, runs at RUN_HOUR UTC
@@ -12,21 +9,24 @@ Usage:
 """
 
 import sys
+import os
 import time
 import logging
 from datetime import datetime, timezone
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [scheduler] %(message)s",
+    format="%(asctime)s [scheduler] %(levelname)s: %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
 log = logging.getLogger(__name__)
 
-RUN_HOUR = 6   # UTC hour to trigger daily run
+RUN_HOUR = int(os.getenv("SCHEDULER_RUN_HOUR", "6"))   # UTC hour to trigger daily run
 
 
 def run_once():
+    """Execute one pipeline run with backup."""
+    log.info("─" * 60)
     log.info("Backing up existing SQLite database...")
     try:
         from backup import backup_db
@@ -38,24 +38,32 @@ def run_once():
     from arxiv_pipeline import run_pipeline
     try:
         results = run_pipeline()
-        log.info(f"Pipeline complete. {len(results)} papers processed.")
+        log.info(f"✓ Pipeline complete. {len(results)} papers processed.")
     except Exception as e:
-        log.error(f"Pipeline failed: {e}", exc_info=True)
+        log.error(f"✗ Pipeline failed: {e}", exc_info=True)
+    finally:
+        log.info("─" * 60)
 
 
 def loop():
+    """Run scheduler loop, checking once per minute."""
     log.info(f"Scheduler started. Will run daily at {RUN_HOUR:02d}:00 UTC.")
+    log.info(f"DATABASE_PATH: {os.getenv('DATABASE_PATH', 'default (./db)')}")
     last_run_date = None
 
     while True:
-        now = datetime.now(timezone.utc)
-        today = now.date()
+        try:
+            now = datetime.now(timezone.utc)
+            today = now.date()
 
-        if now.hour >= RUN_HOUR and last_run_date != today:
-            last_run_date = today
-            run_once()
+            if now.hour >= RUN_HOUR and last_run_date != today:
+                last_run_date = today
+                run_once()
 
-        time.sleep(60)   # check every minute
+            time.sleep(60)   # check every minute
+        except Exception as e:
+            log.error(f"Scheduler loop error: {e}", exc_info=True)
+            time.sleep(300)  # wait 5 minutes before retrying
 
 
 if __name__ == "__main__":
