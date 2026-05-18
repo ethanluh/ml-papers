@@ -215,6 +215,16 @@
       font-family: 'DM Mono', monospace;
       font-size: 0.72rem;
       line-height: 1.4;
+      min-height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+
+    .ad-fallback {
+      opacity: 0.8;
+      max-width: 100%;
     }
 
     .tag-velocity {
@@ -538,7 +548,11 @@
     <div class="sidebar-section">
       <div class="sidebar-label">Sponsored</div>
       <div class="ad-box">
-        <!-- Replace the placeholder client/slot with your own Google AdSense values -->
+        <div class="ad-fallback">
+          <strong>Ad slot preview</strong><br />
+          Replace `data-ad-client` and `data-ad-slot` with your real AdSense values.
+          Ads often do not render on localhost or before your site is approved.
+        </div>
         <ins class="adsbygoogle"
              style="display:block"
              data-ad-client="ca-pub-XXXXXXXXXXXXXXXX"
@@ -582,7 +596,7 @@
 </div>
 
 <script>
-const API = '';   // same origin; change to 'http://localhost:8000' for dev
+const API = window.location.host === 'localhost:3000' ? 'http://localhost:8000' : '';
 
 const TASK_COLORS = {
   classification: 'var(--task-classification)',
