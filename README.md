@@ -111,6 +111,20 @@ python -m http.server 3000 --directory frontend
 
 Access at `http://localhost:3000`
 
+## Automated Daily Ingestion (GitHub Actions)
+
+The workflow in `.github/workflows/daily-ingestion.yml` runs the full ingestion
+(fetch → summarize → store in SQLite) every day at 06:00 UTC, and can also be
+triggered manually from the Actions tab via **Run workflow**.
+
+Setup:
+1. In your GitHub repository, go to **Settings → Secrets and variables → Actions**
+2. Add a repository secret named `GROQ_API_KEY` with your Groq API key
+
+Each run restores the SQLite database from the previous run's Actions cache, so
+papers accumulate day over day. The raw results JSON and updated `papers.db`
+are also uploaded as workflow artifacts (30-day retention).
+
 ## API Endpoints
 
 - `GET /papers` - List all papers with pagination
