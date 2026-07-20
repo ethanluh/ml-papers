@@ -1,0 +1,62 @@
+name: Daily arXiv Ingestion
+
+on:
+  schedule:
+    # 06:00 UTC daily — matches the scheduler's default SCHEDULER_RUN_HOUR
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-ingestion
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # The database is gitignored, so carry it between runs via the
+      # Actions cache. restore-keys falls back to the most recent run's
+      # cache, letting papers accumulate day over day.
+      - name: Restore paper database
+        uses: actions/cache/restore@v4
+        with:
+          path: db
+          key: papers-db-${{ github.run_id }}
+          restore-keys: |
+            papers-db-
+
+      - name: Run ingestion
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python pipeline/ingest.py
+
+      - name: Save paper database
+        uses: actions/cache/save@v4
+        with:
+          path: db
+          key: papers-db-${{ github.run_id }}
+
+      - name: Upload ingestion results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ingestion-${{ github.run_id }}
+          path: |
+            arxiv_results_*.json
+            db/papers.db
+          retention-days: 30
