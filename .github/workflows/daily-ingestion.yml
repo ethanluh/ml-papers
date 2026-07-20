@@ -5,6 +5,10 @@ on:
     # 06:00 UTC daily — matches the scheduler's default SCHEDULER_RUN_HOUR
     - cron: "0 6 * * *"
   workflow_dispatch:
+  # Temporary trigger to test the workflow before merge — remove after PR review
+  push:
+    branches:
+      - claude/daily-ingestion-github-action-tze93q
 
 permissions:
   contents: read
