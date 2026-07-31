@@ -1,0 +1,8 @@
+name = "ml-papers-dashboard"
+compatibility_date = "2026-07-01"
+pages_build_output_dir = "frontend"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ml-papers-db"
+database_id = "843a7165-5d39-47b9-b1f4-ae64d1f83f7c"

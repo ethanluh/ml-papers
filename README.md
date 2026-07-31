@@ -6,170 +6,119 @@ A real-time machine learning research dashboard that fetches papers from arXiv, 
 
 - 📚 **Automated Paper Fetching** - Scrapes latest ML/AI papers from arXiv
 - 🤖 **AI Summaries** - Uses Groq's llama-3.3-70b model to generate concise paper summaries
-- 💾 **Local Database** - SQLite storage with full-text search for fast keyword queries
-- ⚡ **FastAPI Backend** - RESTful API for paper retrieval, search, and trending velocity
+- 💾 **Cloudflare D1** - Managed SQLite storage with full-text search for fast keyword queries
+- ⚡ **Cloudflare Pages Functions** - API for paper retrieval, search, and trending velocity, same-origin with the frontend
 - 🎨 **Interactive Frontend** - Clean, responsive web interface with filters, trending cards, and AdSense slot
 - 📊 **Statistics** - Aggregated insights on paper categories, date trends, and momentum
 
 ## Project Structure
 
 ```
-arxiv-ml-dashboard/
-├── api/                      # FastAPI backend
-│   ├── main.py              # API routes and server
-│   └── models.py            # Pydantic data models
+ml-papers/
+├── functions/api/            # Cloudflare Pages Functions (API)
+│   ├── papers.js             # GET /api/papers
+│   ├── stats.js              # GET /api/stats
+│   ├── ingest.js             # POST /api/ingest (authenticated, used by CI)
+│   └── _shared.js            # Shared helpers
 ├── pipeline/                 # Data processing pipeline
-│   ├── arxiv_pipeline.py    # arXiv scraper & Groq integration
-│   ├── backup.py            # Local SQLite backup workflow
-│   ├── db.py                # SQLite database interface
-│   └── scheduler.py         # Periodic task scheduling
+│   ├── arxiv_pipeline.py     # arXiv scraper & Groq integration
+│   └── ingest.py             # One-shot: run pipeline, POST results to /api/ingest
 ├── frontend/                 # Web frontend
-│   ├── index.html           # Main page
-│   ├── app.js               # Application logic
-│   └── style.css            # Styling
-├── db/                       # Database directory
-│   └── papers.db            # SQLite database (auto-created)
-├── requirements.txt         # Python dependencies
-├── .env                     # Environment configuration
-└── README.md               # This file
+│   └── index.html            # Self-contained dashboard (inline CSS/JS)
+├── schema.sql                # D1 schema (papers table + FTS5 index)
+├── wrangler.toml             # Cloudflare Pages + D1 binding config
+├── package.json              # wrangler devDependency + local dev script
+├── requirements.txt          # Python dependencies (ingestion pipeline)
+└── README.md                 # This file
 ```
 
-## Installation
+See `DEPLOYMENT.md` for full Cloudflare setup and deployment instructions.
+
+## Local development
 
 ### Prerequisites
 
-- Python 3.10+
-- pip or conda
+- Python 3.11+ and Node.js (for `wrangler`)
 - Groq API key (free tier available at https://console.groq.com)
 
 ### Setup
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd arxiv-ml-dashboard
-   ```
-
-2. **Create virtual environment**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Configure environment**
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` and add your Groq API key:
-   ```
-   GROQ_API_KEY=your_api_key_here
-   ```
-
-## Usage
-
-### 1. Fetch and Summarize Papers
-
 ```bash
-python pipeline/arxiv_pipeline.py
+git clone <repository-url>
+cd ml-papers
+
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+npm install
+npx wrangler d1 execute ml-papers-db --local --file=./schema.sql   # one-time
 ```
 
-This will:
-- Fetch latest papers from arXiv categories (cs.LG, stat.ML, cs.AI)
-- Generate summaries using Groq
-- Store papers in SQLite database
-- Create an automatic local backup before the scheduler runs
-
-### 2. Backup the local database
+### Run the app
 
 ```bash
-python pipeline/backup.py
+npm run dev
 ```
 
-This saves `db/papers.db` to `db/backups/papers_backup_YYYYMMDD_HHMMSS.db`.
+Serves the dashboard and API together (same-origin) at `http://localhost:8788`.
 
-### 3. Start the API Server
+### Ingest papers locally
 
 ```bash
-uvicorn api.main:app --reload --port 8000
+export GROQ_API_KEY=your_key_here
+export INGEST_URL=http://localhost:8788/api/ingest
+export INGEST_TOKEN=dev-secret   # must match the local Functions env
+python pipeline/ingest.py
 ```
 
-Server runs on `http://localhost:8000`
-- API docs: `http://localhost:8000/docs`
-- Redoc: `http://localhost:8000/redoc`
-
-### 3. Open the Frontend
-
-Open `frontend/index.html` in your browser or serve with:
-```bash
-python -m http.server 3000 --directory frontend
-```
-
-Access at `http://localhost:3000`
+This fetches the latest papers from arXiv (cs.LG, stat.ML, cs.AI), summarizes
+each with Groq, and POSTs the results to `/api/ingest`, which upserts them
+into D1.
 
 ## Automated Daily Ingestion (GitHub Actions)
 
-The workflow in `.github/workflows/daily-ingestion.yml` runs the full ingestion
-(fetch → summarize → store in SQLite) every day at 06:00 UTC, and can also be
-triggered manually from the Actions tab via **Run workflow**.
-
-Setup:
-1. In your GitHub repository, go to **Settings → Secrets and variables → Actions**
-2. Add a repository secret named `GROQ_API_KEY` with your Groq API key
-
-Each run restores the SQLite database from the previous run's Actions cache, so
-papers accumulate day over day. The raw results JSON and updated `papers.db`
-are also uploaded as workflow artifacts (30-day retention).
+The workflow in `.github/workflows/daily-ingestion.yml` runs the full
+ingestion (fetch → summarize → POST to the deployed `/api/ingest` endpoint)
+every day at 06:00 UTC, and can also be triggered manually from the Actions
+tab via **Run workflow**. See `DEPLOYMENT.md` for the required repo secrets
+(`GROQ_API_KEY`, `INGEST_URL`, `INGEST_TOKEN`).
 
 ## API Endpoints
 
-- `GET /papers` - List all papers with pagination
-  - Query params: `task`, `difficulty`, `search`, `limit`, `offset`
-- `GET /papers/{paper_id}` - Get specific paper details
-- `GET /stats` - Get aggregated statistics and trending paper hotness
+- `GET /api/papers` - List papers with pagination
+  - Query params: `task`, `difficulty`, `search`, `limit` (max 200), `offset`
+- `GET /api/stats` - Aggregated statistics, task/date breakdowns, and trending papers
+- `POST /api/ingest` - Authenticated upsert endpoint used by the daily CI job (`X-Ingest-Token` header required)
 
 ## Configuration
 
 Edit `pipeline/arxiv_pipeline.py` to customize:
 - `CATEGORIES` - arXiv categories to fetch (default: cs.LG, stat.ML, cs.AI)
-- `MAX_PAPERS` - Number of papers per category (default: 20)
+- `MAX_PAPERS` - Number of papers per run (default: 20)
 - `MODEL` - Groq model (default: llama-3.3-70b-versatile)
 - `SLEEP_SEC` - Rate limiting delay between requests
 
 ## Database Schema
 
-**papers table:**
+**papers table** (see `schema.sql`):
 - `id` - arXiv paper ID (primary key)
 - `title` - Paper title
 - `abstract` - Paper abstract
 - `authors` - JSON array of authors
 - `published` - Publication date (YYYY-MM-DD)
 - `categories` - JSON array of arXiv categories
-- `arxiv_url` - Link to arXiv page
-- `summary` - AI-generated summary from Groq
-- `updated_at` - Last update timestamp
+- `summary`, `tldr`, `task`, `difficulty`, `methods` - Groq-generated fields
+- `inserted_at` - Last upsert timestamp
 
-## Development
+Full-text search runs against the `papers_fts` FTS5 virtual table
+(id, title, abstract, summary, tldr).
 
-### Dependencies
+## Backups
 
-- **FastAPI** - Modern web framework
-- **Uvicorn** - ASGI server
-- **Groq** - LLM API client
-- **Requests** - HTTP library
-- **Pydantic** - Data validation
-
-### Code Style
-
-Follow PEP 8 conventions. Format with:
-```bash
-pip install black pylint
-black pipeline/ api/
-```
+D1 has built-in Time Travel (30-day point-in-time recovery) — see
+`DEPLOYMENT.md`. Do not run `wrangler d1 export` against this database
+(known to break with FTS5 virtual tables present).
 
 ## Troubleshooting
 
@@ -178,14 +127,8 @@ black pipeline/ api/
 export GROQ_API_KEY=your_key_here
 ```
 
-**Port 8000 already in use:**
-```bash
-uvicorn api.main:app --port 8001
-```
-
-**Database locked error:**
-- Ensure only one instance of the pipeline is running
-- Delete `db/papers.db` and restart if corrupted
+**Ingestion POST fails with 401:** `INGEST_TOKEN` doesn't match between the
+client and the Pages Functions environment — see `DEPLOYMENT.md`.
 
 ## License
 

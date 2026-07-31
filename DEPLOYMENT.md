@@ -1,153 +1,114 @@
-# Deployment Guide for Render.com & Railway
+# Deployment Guide: Cloudflare Pages + D1
 
-Your app is now configured to work on both Render.com and Railway, which support long-running Python services, persistent databases, and background workers.
+The app runs entirely on Cloudflare: static frontend + API on **Pages** (with
+Pages Functions for the API routes), data in **D1** (Cloudflare's managed
+SQLite). Daily ingestion runs as a **GitHub Actions** cron job that POSTs
+new papers to an authenticated API route, which upserts them into D1.
 
-## Key Changes Made
+There is no long-running worker/scheduler process to deploy or pay for —
+GitHub Actions is the only ingestion trigger.
 
-✅ **Removed Vercel.json** - Vercel serverless isn't suitable for this architecture  
-✅ **Added render.yaml** - Render.com configuration with web service + scheduler  
-✅ **Added railway.json** - Railway configuration for auto-detection  
-✅ **Added Procfile** - Process definition for both platforms  
-✅ **Updated db.py** - Uses persistent `/var/data` storage path  
-✅ **Improved api/main.py** - Better error handling and logging  
-✅ **Enhanced scheduler.py** - More robust with error recovery  
+## Architecture
 
-## Deploying to Render.com (Recommended)
+- `frontend/` — static dashboard (`index.html`, self-contained), served as
+  Pages' static assets.
+- `functions/api/papers.js`, `functions/api/stats.js` — read-only API
+  routes, implemented as Pages Functions with a native D1 binding (`env.DB`).
+  Same-origin as the frontend, so no CORS configuration is needed.
+- `functions/api/ingest.js` — authenticated write route
+  (`POST /api/ingest`, gated by an `X-Ingest-Token` header checked against
+  the `INGEST_TOKEN` environment secret) used by the daily GitHub Actions
+  job. Uses D1's bound prepared statements — no manual SQL escaping.
+- `pipeline/arxiv_pipeline.py` — fetches + summarizes papers (unchanged).
+- `pipeline/ingest.py` — one-shot script that runs the pipeline and POSTs
+  results to `/api/ingest`. Run daily by
+  `.github/workflows/daily-ingestion.yml`.
+- `schema.sql` — D1 schema (papers table + FTS5 full-text index).
 
-### Step 1: Connect Your Repository
-1. Go to [https://dashboard.render.com](https://dashboard.render.com)
-2. Click "New +" → "Blueprint"
-3. Connect your GitHub repository
-4. Render will auto-detect `render.yaml`
+## One-time setup
 
-### Step 2: Configure Environment Variables
-In the Render dashboard for your service:
-- Add `GROQ_API_KEY` with your API key value
-- The `render.yaml` will set `DATABASE_PATH` automatically
-
-### Step 3: Deploy
-1. Click "Create Blueprint"
-2. Render will automatically:
-   - Create a web service (FastAPI on dynamic port)
-   - Create a background worker (scheduler.py)
-   - Create persistent disk storage at `/var/data`
-   - Run `pip install -r requirements.txt`
-
-### Verification
-- **Web Service**: Check logs at `https://dashboard.render.com` → Logs tab
-- **Scheduler**: Should start logging at 06:00 UTC each day
-- **Database**: Persisted to `/var/data/papers.db`
-
----
-
-## Deploying to Railway
-
-### Step 1: Install Railway CLI
+### 1. Create the D1 database
 ```bash
-npm install -g @railway/cli
+npx wrangler d1 create ml-papers-db
+```
+Copy the printed `database_id` into `wrangler.toml`'s `[[d1_databases]]`
+block.
+
+### 2. Apply the schema
+```bash
+npx wrangler d1 execute ml-papers-db --remote --file=./schema.sql
 ```
 
-### Step 2: Connect Repository
+### 3. Create the Pages project
+Connect the GitHub repository via the Cloudflare dashboard
+(Workers & Pages → Create → Pages → Connect to Git), or via CLI:
 ```bash
-railway login
-railway init
+npx wrangler pages project create ml-papers-dashboard
+npx wrangler pages deploy frontend
+```
+Cloudflare auto-detects `functions/` and deploys the API routes alongside
+the static site.
+
+### 4. Bind D1 to the Pages project
+If your installed `wrangler` version doesn't apply the `[[d1_databases]]`
+block in `wrangler.toml` to a Pages project automatically, bind it manually:
+Pages project → Settings → Functions → D1 database bindings → add
+variable name `DB` → select `ml-papers-db`.
+
+### 5. Set secrets
+- **Pages project** (Settings → Environment variables, as a secret):
+  `INGEST_TOKEN` — a random shared secret the ingestion job authenticates with.
+- **GitHub repo secrets** (Settings → Secrets and variables → Actions):
+  - `GROQ_API_KEY` — for paper summarization.
+  - `INGEST_URL` — e.g. `https://ml-papers-dashboard.pages.dev/api/ingest`.
+  - `INGEST_TOKEN` — must match the value set on the Pages project.
+
+### 6. Trigger ingestion
+Run the workflow manually once (Actions tab → Daily arXiv Ingestion →
+Run workflow) to verify papers show up on the live site, then let the
+06:00 UTC daily cron take over.
+
+## Local development
+
+```bash
+npm install
+npx wrangler d1 execute ml-papers-db --local --file=./schema.sql   # one-time
+npm run dev   # serves the dashboard + API at http://localhost:8788
 ```
 
-### Step 3: Configure Variables
-In your Railway dashboard or via CLI:
+To ingest into the local D1 instance, run the Python pipeline against a
+locally running `wrangler pages dev` (set `INGEST_URL=http://localhost:8788/api/ingest`
+and any `INGEST_TOKEN` matching a local `.dev.vars` file):
 ```bash
-railway variables set GROQ_API_KEY=your_key_here
+export GROQ_API_KEY=your_key_here
+export INGEST_URL=http://localhost:8788/api/ingest
+export INGEST_TOKEN=dev-secret
+python pipeline/ingest.py
 ```
 
-### Step 4: Deploy
+## Backups
+
+D1 has built-in **Time Travel** (30-day point-in-time recovery) — no manual
+backup step is required:
 ```bash
-railway up
+npx wrangler d1 time-travel restore ml-papers-db --timestamp=<ISO8601>
 ```
 
-Railway will:
-- Detect Python via `requirements.txt`
-- Use start command from `railway.json`
-- Build and deploy automatically
-- Persist data to `/var/data`
-
----
+**Do not run `wrangler d1 export`** against this database — Cloudflare has an
+open issue where export crashes/corrupts databases that contain FTS5 virtual
+tables (this database's `papers_fts` table). Use Time Travel for any
+recovery needs instead.
 
 ## Troubleshooting
 
-### "FUNCTION_INVOCATION_FAILED" on Render/Railway?
-✅ **Fixed!** The error occurred because:
-- Vercel's serverless functions have a 60-second timeout
-- Your app needs persistent database connections
-- Scheduler running in the background isn't supported on Vercel
+**API returns empty results / 500s**: confirm the D1 binding is named `DB`
+in both `wrangler.toml` and the Pages dashboard, and that `schema.sql` has
+been applied to the `--remote` database.
 
-Render.com and Railway support all of this natively.
+**Ingestion job fails with 401**: `INGEST_TOKEN` in the GitHub repo secrets
+doesn't match the Pages project's `INGEST_TOKEN` environment variable.
 
-### Database Not Found?
-Ensure `DATABASE_PATH` environment variable is set to `/var/data`:
-```bash
-# Render.yaml handles this automatically
-# Railway: set via dashboard
-railway variables set DATABASE_PATH=/var/data
-```
-
-### Scheduler Not Running?
-Check the background worker logs:
-- **Render**: Dashboard → "arxiv-scheduler" service → Logs
-- **Railway**: `railway logs --service arxiv-scheduler`
-
-Expected output: `Scheduler started. Will run daily at 06:00 UTC.`
-
----
-
-## Architecture Comparison
-
-| Feature | Vercel | Render.com | Railway |
-|---------|--------|-----------|---------|
-| **Python Support** | ✅ Serverless only | ✅ Long-running | ✅ Long-running |
-| **Background Tasks** | ❌ No | ✅ Yes | ✅ Via Cron |
-| **Persistent DB** | ❌ Cold storage | ✅ Disk storage | ✅ (via DB service) |
-| **Database Scheduler** | ❌ Won't work | ✅ YEs | ✅ Yes |
-| **Request Timeout** | 60s | 30m (default) | 30m |
-| **Free Tier** | ✅ Generous | ✅ $7/month | ✅ $5/month |
-
----
-
-## Local Development
-
-Nothing has changed for local development:
-```bash
-# Terminal 1: Run the FastAPI server
-uvicorn api.main:app --reload --port 8000
-
-# Terminal 2: Run the scheduler
-python pipeline/scheduler.py
-```
-
-Environment variables are read from `.env` by default.
-
----
-
-## Final Checklist
-
-Before deploying:
-- [ ] Push code to GitHub
-- [ ] `.env` file contains valid `GROQ_API_KEY`
-- [ ] `requirements.txt` is up-to-date
-- [ ] `render.yaml` or `railway.json` is committed
-- [ ] `Procfile` is committed
-
-Then:
-1. Choose Render.com (easier) or Railway
-2. Connect GitHub repository
-3. Set `GROQ_API_KEY` environment variable
-4. Watch logs during deployment
-5. Verify API is responding: `GET /api/stats`
-6. Verify scheduler starts: check logs at 06:00 UTC
-
----
-
-## Questions?
-
-- **Render.com docs**: https://render.com/docs
-- **Railway docs**: https://docs.railway.app
-- **FastAPI on Render**: https://render.com/docs/deploy-fastapi
+**Search returns nothing**: full-text search matches `papers_fts`; if papers
+were inserted before the FTS table existed, they'll be present in `papers`
+but not searchable — re-run ingestion to backfill via the upsert path in
+`functions/api/ingest.js`.

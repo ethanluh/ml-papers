@@ -52,3 +52,6 @@ db/
 arxiv_results_*.json
 node_modules/
 
+# Cloudflare / wrangler local dev state
+.wrangler/
+
