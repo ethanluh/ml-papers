@@ -3,7 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler pages dev frontend --d1=DB=ml-papers-db"
+    "dev": "wrangler pages dev frontend --d1=DB=ml-papers-db",
+    "deploy": "wrangler pages deploy frontend",
+    "schema:local": "wrangler d1 execute ml-papers-db --local --file=./schema.sql",
+    "schema:remote": "wrangler d1 execute ml-papers-db --remote --file=./schema.sql"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
