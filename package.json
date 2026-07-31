@@ -1,0 +1,11 @@
+{
+  "name": "ml-papers-dashboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler pages dev frontend --d1=DB=ml-papers-db"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
