@@ -1,4 +1,4 @@
-# arXiv ML Dashboard
+# ML Digest
 
 A real-time machine learning research dashboard that fetches papers from arXiv, generates AI-powered summaries using Groq, and displays them through an interactive web interface.
 
