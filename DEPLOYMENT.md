@@ -60,7 +60,7 @@ variable name `DB` → select `ml-papers-db`.
   `INGEST_TOKEN` — a random shared secret the ingestion job authenticates with.
 - **GitHub repo secrets** (Settings → Secrets and variables → Actions):
   - `GROQ_API_KEY` — for paper summarization.
-  - `INGEST_URL` — e.g. `https://ml-papers-dashboard.pages.dev/api/ingest`.
+  - `INGEST_URL` — e.g. `https://ml-digest.ethanluh.com/api/ingest`.
   - `INGEST_TOKEN` — must match the value set on the Pages project.
 
 ### 6. Trigger ingestion
